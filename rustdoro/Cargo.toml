@@ -3,9 +3,9 @@ name = "rustdoro"
 version = "0.1.0"
 edition = "2021"
 description = "A terminal-based Pomodoro timer written in Rust"
-authors = ["Your Name <your.email@example.com>"]
+authors = ["Rui XU <xurui1412@gmail.com>"]
 license = "MIT"
-repository = "https://github.com/your-username/rustdoro"
+repository = "https://github.com/PPSherry/rustdoro.git"
 
 [dependencies]
 clap = { version = "4.0", features = ["derive"] }
