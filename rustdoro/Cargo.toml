@@ -1,0 +1,19 @@
+[package]
+name = "rustdoro"
+version = "0.1.0"
+edition = "2021"
+description = "A terminal-based Pomodoro timer written in Rust"
+authors = ["Your Name <your.email@example.com>"]
+license = "MIT"
+repository = "https://github.com/your-username/rustdoro"
+
+[dependencies]
+clap = { version = "4.0", features = ["derive"] }
+ratatui = "0.24"
+crossterm = "0.27"
+rodio = "0.17"
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+anyhow = "1.0"
+dirs = "5.0"
+tokio = { version = "1.0", features = ["full"] }
