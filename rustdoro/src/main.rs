@@ -25,8 +25,8 @@ impl App {
     /// Create a new application instance
     fn new(config: Config) -> Result<Self> {
         let timer = Timer::new(config.clone());
-        let ui = AppUI::new(config.hide_clock)?;
-        let notifications = NotificationManager::new(config.enable_sound)?;
+        let ui = AppUI::new(config.hide_clock())?;
+        let notifications = NotificationManager::new(config.clone())?;
         let last_session_type = timer.get_session_type();
 
         Ok(Self {
@@ -127,11 +127,40 @@ async fn main() -> Result<()> {
     // Parse command line arguments
     let args = CliArgs::parse();
     
-    // Create configuration from CLI arguments
-    let config = Config::load_from_cli_args(args);
+    // Handle config file generation if requested
+    if args.generate_config {
+        match Config::create_sample_config() {
+            Ok(()) => {
+                println!("Sample configuration file created successfully!");
+                println!("You can now edit the configuration file and run rustdoro again.");
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("Failed to create sample configuration file: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
     
-    // Print welcome message
+    // Create configuration from CLI arguments with config file support
+    let config = Config::load_from_cli_args_with_config(args);
+    
+    // Print welcome message and current configuration
     println!("🍅 Welcome to Rustdoro - A Terminal Pomodoro Timer");
+    println!("Configuration:");
+    println!("  Work session: {} minutes", config.work_duration_minutes());
+    println!("  Short break: {} minutes", config.short_break_duration_minutes());
+    println!("  Long break: {} minutes", config.long_break_duration_minutes());
+    println!("  Long break after: {} pomodoros", config.long_break_after_pomodoros());
+    println!("  Sound enabled: {}", config.enable_sound());
+    println!("  Hide clock: {}", config.hide_clock());
+    if let Some(audio_file) = &config.audio.audio_file {
+        println!("  Custom audio file: {}", audio_file);
+    }
+    println!("  Audio volume: {:.1}", config.audio.volume);
+    println!("  Loop audio: {}", config.audio.loop_audio);
+    println!("  Alarm duration: {} seconds", config.time.alarm_seconds);
+    println!();
     println!("Press 'h' or '?' for help once the application starts.");
     println!("Starting in 2 seconds...\n");
     tokio::time::sleep(Duration::from_secs(2)).await;

@@ -68,19 +68,19 @@ pub struct Timer {
 impl Timer {
     /// Create a new timer instance with the given configuration
     pub fn new(config: Config) -> Self {
-        let work_duration = Duration::from_secs(config.work_duration_minutes * 60);
+        let work_duration = Duration::from_secs(config.work_duration_minutes() * 60);
         
         Self {
             current_session: SessionType::Work,
             remaining_time: work_duration,
             state: TimerState::Stopped,
             work_duration,
-            short_break_duration: Duration::from_secs(config.short_break_duration_minutes * 60),
-            long_break_duration: Duration::from_secs(config.long_break_duration_minutes * 60),
+            short_break_duration: Duration::from_secs(config.short_break_duration_minutes() * 60),
+            long_break_duration: Duration::from_secs(config.long_break_duration_minutes() * 60),
             pomodoros_completed: 0,
             last_update_time: None,
             break_count: 0,
-            long_break_after_pomodoros: config.long_break_after_pomodoros,
+            long_break_after_pomodoros: config.long_break_after_pomodoros(),
         }
     }
 

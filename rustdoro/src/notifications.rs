@@ -1,90 +1,135 @@
 use anyhow::Result;
-use rodio::{source::Source, OutputStream, OutputStreamHandle, Sink};
+use rodio::{source::Source, Decoder, OutputStream, OutputStreamHandle, Sink};
+use std::fs::File;
+use std::io::BufReader;
+use std::time::Duration;
+use crate::config::Config;
 
 /// Audio notification manager
 pub struct NotificationManager {
     _stream: OutputStream,
     stream_handle: OutputStreamHandle,
-    enabled: bool,
+    config: Config,
 }
 
 impl NotificationManager {
     /// Create a new notification manager
-    pub fn new(enabled: bool) -> Result<Self> {
+    pub fn new(config: Config) -> Result<Self> {
         let (_stream, stream_handle) = OutputStream::try_default()?;
         
         Ok(Self {
             _stream,
             stream_handle,
-            enabled,
+            config,
         })
-    }
-
-    /// Enable or disable sound notifications
-    pub fn set_enabled(&mut self, enabled: bool) {
-        self.enabled = enabled;
     }
 
     /// Check if sound notifications are enabled
     pub fn is_enabled(&self) -> bool {
-        self.enabled
+        !self.config.general.no_sound
     }
 
-    /// Play session start sound
-    pub fn play_start_sound(&self) -> Result<()> {
-        if !self.enabled {
-            return Ok(());
-        }
-
-        // Generate a simple beep sound for session start
-        let sound_data = generate_beep_sound(800.0, 0.3); // 800Hz for 0.3 seconds
-        self.play_sound_data(sound_data)
-    }
-
-    /// Play session end sound
+    /// Play session end sound with looping for alarm duration
     pub fn play_end_sound(&self) -> Result<()> {
-        if !self.enabled {
+        if !self.is_enabled() {
             return Ok(());
         }
 
-        // Generate a different beep sound for session end
-        let sound_data = generate_notification_sound(); // More complex sound
-        self.play_sound_data(sound_data)
+        if let Some(audio_file) = &self.config.audio.audio_file {
+            self.play_custom_audio_file(audio_file)?;
+        } else {
+            self.play_default_end_sound()?;
+        }
+        
+        Ok(())
     }
 
     /// Play work session start sound
     pub fn play_work_start_sound(&self) -> Result<()> {
-        if !self.enabled {
+        if !self.is_enabled() {
             return Ok(());
         }
 
-        let sound_data = generate_beep_sound(600.0, 0.2); // Lower frequency for work
-        self.play_sound_data(sound_data)
+        if let Some(audio_file) = &self.config.audio.audio_file {
+            self.play_custom_audio_file(audio_file)?;
+        } else {
+            let sound_data = generate_beep_sound(600.0, 0.2); // Lower frequency for work
+            self.play_sound_data(sound_data)?;
+        }
+        
+        Ok(())
     }
 
     /// Play break start sound
     pub fn play_break_start_sound(&self) -> Result<()> {
-        if !self.enabled {
+        if !self.is_enabled() {
             return Ok(());
         }
 
-        let sound_data = generate_beep_sound(900.0, 0.2); // Higher frequency for break
-        self.play_sound_data(sound_data)
+        if let Some(audio_file) = &self.config.audio.audio_file {
+            self.play_custom_audio_file(audio_file)?;
+        } else {
+            let sound_data = generate_beep_sound(900.0, 0.2); // Higher frequency for break
+            self.play_sound_data(sound_data)?;
+        }
+        
+        Ok(())
     }
 
-    /// Play generic notification sound
-    pub fn play_notification(&self) -> Result<()> {
-        if !self.enabled {
-            return Ok(());
+    /// Play custom audio file with volume and looping support
+    fn play_custom_audio_file(&self, file_path: &str) -> Result<()> {
+        let file = File::open(file_path)
+            .map_err(|e| anyhow::anyhow!("Failed to open audio file {}: {}", file_path, e))?;
+        let buf_reader = BufReader::new(file);
+        
+        let source = Decoder::new(buf_reader)
+            .map_err(|e| anyhow::anyhow!("Failed to decode audio file {}: {}", file_path, e))?;
+
+        let sink = Sink::try_new(&self.stream_handle)?;
+        sink.set_volume(self.config.audio.volume);
+
+        if self.config.audio.loop_audio {
+            // Loop the audio for the alarm duration
+            let alarm_duration = Duration::from_secs(self.config.time.alarm_seconds);
+            let looped_source = source.repeat_infinite().take_duration(alarm_duration);
+            sink.append(looped_source);
+        } else {
+            // Play once
+            sink.append(source);
         }
 
-        let sound_data = generate_beep_sound(700.0, 0.1); // Short beep
-        self.play_sound_data(sound_data)
+        // Wait for the sound to finish playing
+        sink.sleep_until_end();
+        
+        Ok(())
+    }
+
+    /// Play default end sound with looping
+    fn play_default_end_sound(&self) -> Result<()> {
+        let sound_data = generate_notification_sound();
+        
+        if self.config.audio.loop_audio {
+            // Play the sound multiple times for alarm duration
+            let alarm_duration = self.config.time.alarm_seconds;
+            let sound_duration_ms = 600; // Our notification sound is 0.6 seconds
+            let repeat_count = (alarm_duration * 1000 / sound_duration_ms).max(1);
+            
+            for _ in 0..repeat_count {
+                self.play_sound_data(sound_data.clone())?;
+                // Small pause between repeats
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        } else {
+            self.play_sound_data(sound_data)?;
+        }
+        
+        Ok(())
     }
 
     /// Play sound data through the audio system
     fn play_sound_data(&self, sound_data: Vec<i16>) -> Result<()> {
         let sink = Sink::try_new(&self.stream_handle)?;
+        sink.set_volume(self.config.audio.volume);
         
         // Convert the sound data to a source
         let source = SineWaveSource::new(sound_data);
@@ -136,8 +181,8 @@ impl Source for SineWaveSource {
         44100 // Standard sample rate
     }
 
-    fn total_duration(&self) -> Option<std::time::Duration> {
-        Some(std::time::Duration::from_secs_f32(
+    fn total_duration(&self) -> Option<Duration> {
+        Some(Duration::from_secs_f32(
             self.data.len() as f32 / 44100.0,
         ))
     }
@@ -243,4 +288,4 @@ pub fn generate_triple_beep() -> Vec<i16> {
     }
 
     sound_data
-} 
+}
