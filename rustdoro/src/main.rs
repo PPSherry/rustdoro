@@ -70,6 +70,9 @@ impl App {
                 } => {}
             }
 
+            // Update UI focus based on timer state
+            self.ui.update_focus_based_on_timer_state(&self.timer);
+            
             // Draw the UI
             self.ui.draw(&self.timer)?;
 
