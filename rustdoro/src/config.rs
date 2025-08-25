@@ -189,7 +189,6 @@ impl Config {
             "# Rustdoro Configuration File\n\
              # This file contains settings for the Rustdoro Pomodoro timer.\n\
              # You can edit these values to customize your experience.\n\
-             # Similar to pydoro configuration format.\n\
              \n\
              {}\n",
             toml_string
@@ -319,5 +318,31 @@ impl Config {
         self.save_to_file(&config_path)?;
         println!("Configuration saved to: {:?}", config_path);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_home_directory() {
+        // get home directory
+        let home = dirs::home_dir();
+        println!("Home directory is {:?}", home);
+
+        let config_path = Config::default_config_path();
+        println!("Default config path is {:?}", config_path);
+
+        match config_path {
+            Ok(path) => {
+                println!("Config path is {}", path.display());
+                assert!(path.starts_with(home.unwrap()));
+                assert_eq!(path.file_name().unwrap(), ".rustdoro.ini");
+            }
+            Err(e) => {
+                println!("Error getting config path: {:?}", e);
+            }
+        }
     }
 }

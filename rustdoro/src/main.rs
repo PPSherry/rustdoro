@@ -233,11 +233,11 @@ mod tests {
     #[test]
     fn test_config_creation() {
         let config = Config::default();
-        assert_eq!(config.work_duration_minutes, 25);
-        assert_eq!(config.short_break_duration_minutes, 5);
-        assert_eq!(config.long_break_duration_minutes, 15);
-        assert!(config.enable_sound);
-        assert!(!config.hide_clock);
+        assert_eq!(config.time.work_minutes, 25);
+        assert_eq!(config.time.small_break_minutes, 5);
+        assert_eq!(config.time.long_break_minutes, 15);
+        assert!(!config.general.no_sound);
+        assert!(!config.general.no_clock);
     }
 
     #[test]
