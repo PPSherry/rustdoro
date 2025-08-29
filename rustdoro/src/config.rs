@@ -75,8 +75,6 @@ pub struct TimeConfig {
     pub small_break_minutes: u64,
     /// Long break duration in minutes
     pub long_break_minutes: u64,
-    /// Alarm duration in seconds
-    pub alarm_seconds: u64,
 }
 
 /// Audio configuration section
@@ -86,8 +84,6 @@ pub struct AudioConfig {
     pub audio_file: Option<String>,
     /// Audio volume (0.0 to 1.0)
     pub volume: f32,
-    /// Whether to loop the audio during alarm
-    pub loop_audio: bool,
 }
 
 /// Configuration structure for the Pomodoro timer
@@ -114,12 +110,10 @@ impl Default for Config {
                 work_minutes: 25,
                 small_break_minutes: 5,
                 long_break_minutes: 10,
-                alarm_seconds: 5,
             },
             audio: AudioConfig {
                 audio_file: None,
                 volume: 0.7,
-                loop_audio: true,
             },
         }
     }

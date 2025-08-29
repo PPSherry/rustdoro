@@ -169,8 +169,6 @@ async fn main() -> Result<()> {
         println!("  Custom audio file: {}", audio_file);
     }
     println!("  Audio volume: {:.1}", config.audio.volume);
-    println!("  Loop audio: {}", config.audio.loop_audio);
-    println!("  Alarm duration: {} seconds", config.time.alarm_seconds);
     println!();
     println!("Press 'h' or '?' for help once the application starts.");
     println!("Starting in 2 seconds...\n");
