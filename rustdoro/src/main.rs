@@ -19,6 +19,7 @@ struct App {
     ui: AppUI,
     notifications: NotificationManager,
     last_session_type: SessionType,
+    show_completion_message: bool,
 }
 
 impl App {
@@ -34,6 +35,7 @@ impl App {
             ui,
             notifications,
             last_session_type,
+            show_completion_message: false,
         })
     }
 
@@ -63,6 +65,13 @@ impl App {
                 _ = async {
                     // Handle input synchronously for now
                     if let Ok(input_handled) = self.ui.handle_input(&mut self.timer) {
+                        // Stop audio when user interacts with timer controls
+                        if self.ui.should_stop_audio_on_input() {
+                            self.notifications.stop_audio();
+                            // Hide completion message when user starts interacting
+                            self.show_completion_message = false;
+                        }
+                        
                         if input_handled {
                             return;
                         }
@@ -74,7 +83,7 @@ impl App {
             self.ui.update_focus_based_on_timer_state(&self.timer);
             
             // Draw the UI
-            self.ui.draw(&self.timer)?;
+            self.ui.draw(&self.timer, self.show_completion_message)?;
 
             // Check if we should quit
             if self.ui.should_quit {
@@ -90,14 +99,16 @@ impl App {
 
     /// Handle session completion
     async fn handle_session_completion(&mut self) -> Result<()> {
-        // Play session end sound
+        // Play session end sound continuously until user interaction
         if let Err(e) = self.notifications.play_end_sound() {
             eprintln!("Warning: Failed to play end sound: {}", e);
         }
 
-        // Show completion message briefly
-        println!("\n🎉 Session completed! Starting next session...\n");
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        // Show completion message in UI
+        self.show_completion_message = true;
+        
+        // Note: Audio will continue playing until user interacts with the timer
+        // The audio stopping is handled in the main loop when user input is detected
 
         Ok(())
     }
@@ -199,32 +210,7 @@ impl Drop for App {
     }
 }
 
-/// Print application information
-fn print_app_info() {
-    println!("Rustdoro v{}", env!("CARGO_PKG_VERSION"));
-    println!("A terminal-based Pomodoro timer written in Rust");
-    println!("Copyright (c) 2024");
-    println!();
-}
 
-/// Handle panic to ensure terminal restoration
-fn setup_panic_hook() {
-    let original_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |panic_info| {
-        use crossterm::{
-            execute,
-            terminal::{disable_raw_mode, LeaveAlternateScreen},
-        };
-        
-        let _ = disable_raw_mode();
-        let _ = execute!(
-            std::io::stdout(),
-            LeaveAlternateScreen
-        );
-        
-        original_hook(panic_info);
-    }));
-}
 
 #[cfg(test)]
 mod tests {

@@ -53,17 +53,7 @@ impl MenuItem {
         }
     }
 
-    /// Get the shortcut key for the menu item
-    pub fn shortcut(&self) -> &'static str {
-        match self {
-            MenuItem::Start => "Space",
-            MenuItem::Pause => "P",
-            MenuItem::Skip => "S",
-            MenuItem::Reset => "R",
-            MenuItem::Help => "H",
-            MenuItem::Exit => "Q",
-        }
-    }
+
 }
 
 /// UI state and configuration
@@ -74,6 +64,8 @@ pub struct AppUI {
     hide_clock: bool,
     /// Currently focused menu item
     pub focused_menu_item: MenuItem,
+    /// Flag to indicate if audio should be stopped on the next input check
+    should_stop_audio: bool,
 }
 
 impl AppUI {
@@ -92,6 +84,7 @@ impl AppUI {
             terminal,
             hide_clock,
             focused_menu_item: MenuItem::Start,
+            should_stop_audio: false,
         })
     }
 
@@ -122,7 +115,7 @@ impl AppUI {
     }
 
     /// Draw the UI
-    pub fn draw(&mut self, timer: &Timer) -> Result<()> {
+    pub fn draw(&mut self, timer: &Timer, show_completion_message: bool) -> Result<()> {
         let show_help = self.show_help;
         let hide_clock = self.hide_clock;
         let focused_item = self.focused_menu_item;
@@ -132,6 +125,8 @@ impl AppUI {
             
             if show_help {
                 render_help_popup(f);
+            } else if show_completion_message {
+                render_completion_message_popup(f);
             }
         })?;
         Ok(())
@@ -145,6 +140,13 @@ impl AppUI {
             }
         }
         Ok(false)
+    }
+
+    /// Check if audio should be stopped on input and reset the flag
+    pub fn should_stop_audio_on_input(&mut self) -> bool {
+        let result = self.should_stop_audio;
+        self.should_stop_audio = false;
+        result
     }
 
     /// Move focus to the next menu item
@@ -168,6 +170,8 @@ impl AppUI {
         match self.focused_menu_item {
             MenuItem::Start => {
                 if timer.is_stopped() || timer.is_paused() {
+                    // Stop any playing audio when starting a new session
+                    self.should_stop_audio = true;
                     timer.toggle_pause();
                     // Update focus to pause when timer starts
                     if timer.is_running() {
@@ -187,11 +191,15 @@ impl AppUI {
                 false
             }
             MenuItem::Skip => {
+                // Stop any playing audio when skipping
+                self.should_stop_audio = true;
                 timer.skip_session();
                 self.focused_menu_item = MenuItem::Start;
                 false
             }
             MenuItem::Reset => {
+                // Stop any playing audio when resetting
+                self.should_stop_audio = true;
                 timer.reset();
                 self.focused_menu_item = MenuItem::Start;
                 false
@@ -242,6 +250,10 @@ impl AppUI {
                 true
             }
             KeyCode::Char('p') => {
+                // Stop any playing audio when starting a new session via shortcut
+                if !timer.is_running() {
+                    self.should_stop_audio = true;
+                }
                 timer.toggle_pause();
                 // Update focused item based on timer state
                 if timer.is_running() {
@@ -252,11 +264,15 @@ impl AppUI {
                 false
             }
             KeyCode::Char('s') => {
+                // Stop any playing audio when skipping via shortcut
+                self.should_stop_audio = true;
                 timer.skip_session();
                 self.focused_menu_item = MenuItem::Start;
                 false
             }
             KeyCode::Char('r') => {
+                // Stop any playing audio when resetting via shortcut
+                self.should_stop_audio = true;
                 timer.reset();
                 self.focused_menu_item = MenuItem::Start;
                 false
@@ -529,4 +545,22 @@ fn render_help_popup(f: &mut Frame) {
 
     f.render_widget(Clear, area); // Clear the background
     f.render_widget(help_list, area);
+}
+
+/// Render completion message popup
+fn render_completion_message_popup(f: &mut Frame) {
+    let area = centered_rect(50, 30, f.size());
+
+    let message = Paragraph::new("🎉 Session completed!\n\nPress any key to continue...")
+        .block(
+            Block::default()
+                .title(" Session Complete ")
+                .borders(Borders::ALL)
+                .style(Style::default().fg(Color::Green)),
+        )
+        .style(Style::default().fg(Color::White))
+        .alignment(Alignment::Center);
+
+    f.render_widget(Clear, area); // Clear the background
+    f.render_widget(message, area);
 }

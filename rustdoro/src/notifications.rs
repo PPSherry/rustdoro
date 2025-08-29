@@ -3,6 +3,7 @@ use rodio::{source::Source, Decoder, OutputStream, OutputStreamHandle, Sink};
 use std::fs::File;
 use std::io::BufReader;
 use std::time::Duration;
+use std::sync::Arc;
 use crate::config::Config;
 
 /// Audio notification manager
@@ -10,6 +11,7 @@ pub struct NotificationManager {
     _stream: OutputStream,
     stream_handle: OutputStreamHandle,
     config: Config,
+    current_sink: Option<Arc<Sink>>,
 }
 
 impl NotificationManager {
@@ -21,6 +23,7 @@ impl NotificationManager {
             _stream,
             stream_handle,
             config,
+            current_sink: None,
         })
     }
 
@@ -29,55 +32,106 @@ impl NotificationManager {
         !self.config.general.no_sound
     }
 
-    /// Play session end sound with looping for alarm duration
-    pub fn play_end_sound(&self) -> Result<()> {
+    /// Stop any currently playing audio
+    pub fn stop_audio(&mut self) {
+        if let Some(sink) = &self.current_sink {
+            sink.stop();
+        }
+        self.current_sink = None;
+    }
+
+
+
+    /// Play session end sound with continuous looping until stopped
+    pub fn play_end_sound(&mut self) -> Result<()> {
         if !self.is_enabled() {
             return Ok(());
         }
 
-        if let Some(audio_file) = &self.config.audio.audio_file {
-            self.play_custom_audio_file(audio_file)?;
+        // Stop any currently playing audio first
+        self.stop_audio();
+
+        // Clone the audio file path to avoid borrowing issues
+        let audio_file = self.config.audio.audio_file.clone();
+        
+        if let Some(file_path) = audio_file {
+            self.play_custom_audio_file_continuous(&file_path)?;
         } else {
-            self.play_default_end_sound()?;
+            self.play_default_end_sound_continuous()?;
         }
         
         Ok(())
     }
 
     /// Play work session start sound
-    pub fn play_work_start_sound(&self) -> Result<()> {
+    pub fn play_work_start_sound(&mut self) -> Result<()> {
         if !self.is_enabled() {
             return Ok(());
         }
 
-        if let Some(audio_file) = &self.config.audio.audio_file {
-            self.play_custom_audio_file(audio_file)?;
+        // Stop any currently playing audio first
+        self.stop_audio();
+
+        // Clone the audio file path to avoid borrowing issues
+        let audio_file = self.config.audio.audio_file.clone();
+        
+        if let Some(file_path) = audio_file {
+            self.play_custom_audio_file_once(&file_path)?;
         } else {
             let sound_data = generate_beep_sound(600.0, 0.2); // Lower frequency for work
-            self.play_sound_data(sound_data)?;
+            self.play_sound_data_non_blocking(sound_data)?;
         }
         
         Ok(())
     }
 
     /// Play break start sound
-    pub fn play_break_start_sound(&self) -> Result<()> {
+    pub fn play_break_start_sound(&mut self) -> Result<()> {
         if !self.is_enabled() {
             return Ok(());
         }
 
-        if let Some(audio_file) = &self.config.audio.audio_file {
-            self.play_custom_audio_file(audio_file)?;
+        // Stop any currently playing audio first
+        self.stop_audio();
+
+        // Clone the audio file path to avoid borrowing issues
+        let audio_file = self.config.audio.audio_file.clone();
+        
+        if let Some(file_path) = audio_file {
+            self.play_custom_audio_file_once(&file_path)?;
         } else {
             let sound_data = generate_beep_sound(900.0, 0.2); // Higher frequency for break
-            self.play_sound_data(sound_data)?;
+            self.play_sound_data_non_blocking(sound_data)?;
         }
         
         Ok(())
     }
 
-    /// Play custom audio file with volume and looping support
-    fn play_custom_audio_file(&self, file_path: &str) -> Result<()> {
+
+
+
+
+    /// Play custom audio file once (for session start sounds)
+    fn play_custom_audio_file_once(&mut self, file_path: &str) -> Result<()> {
+        let file = File::open(file_path)
+            .map_err(|e| anyhow::anyhow!("Failed to open audio file {}: {}", file_path, e))?;
+        let buf_reader = BufReader::new(file);
+        
+        let source = Decoder::new(buf_reader)
+            .map_err(|e| anyhow::anyhow!("Failed to decode audio file {}: {}", file_path, e))?;
+
+        let sink = Sink::try_new(&self.stream_handle)?;
+        sink.set_volume(self.config.audio.volume);
+        sink.append(source);
+
+        // Store the sink reference but don't wait for completion
+        self.current_sink = Some(Arc::new(sink));
+        
+        Ok(())
+    }
+
+    /// Play custom audio file with continuous looping until stopped
+    fn play_custom_audio_file_continuous(&mut self, file_path: &str) -> Result<()> {
         let file = File::open(file_path)
             .map_err(|e| anyhow::anyhow!("Failed to open audio file {}: {}", file_path, e))?;
         let buf_reader = BufReader::new(file);
@@ -88,46 +142,37 @@ impl NotificationManager {
         let sink = Sink::try_new(&self.stream_handle)?;
         sink.set_volume(self.config.audio.volume);
 
-        if self.config.audio.loop_audio {
-            // Loop the audio for the alarm duration
-            let alarm_duration = Duration::from_secs(self.config.time.alarm_seconds);
-            let looped_source = source.repeat_infinite().take_duration(alarm_duration);
-            sink.append(looped_source);
-        } else {
-            // Play once
-            sink.append(source);
-        }
+        // Loop the audio continuously until stopped
+        let looped_source = source.repeat_infinite();
+        sink.append(looped_source);
 
-        // Wait for the sound to finish playing
-        sink.sleep_until_end();
+        // Store the sink reference for later control
+        self.current_sink = Some(Arc::new(sink));
         
         Ok(())
     }
 
-    /// Play default end sound with looping
-    fn play_default_end_sound(&self) -> Result<()> {
+    /// Play default end sound with continuous looping until stopped
+    fn play_default_end_sound_continuous(&mut self) -> Result<()> {
         let sound_data = generate_notification_sound();
         
-        if self.config.audio.loop_audio {
-            // Play the sound multiple times for alarm duration
-            let alarm_duration = self.config.time.alarm_seconds;
-            let sound_duration_ms = 600; // Our notification sound is 0.6 seconds
-            let repeat_count = (alarm_duration * 1000 / sound_duration_ms).max(1);
-            
-            for _ in 0..repeat_count {
-                self.play_sound_data(sound_data.clone())?;
-                // Small pause between repeats
-                std::thread::sleep(Duration::from_millis(100));
-            }
-        } else {
-            self.play_sound_data(sound_data)?;
-        }
+        let sink = Sink::try_new(&self.stream_handle)?;
+        sink.set_volume(self.config.audio.volume);
+        
+        // Create a repeating source from the sound data
+        let source = SineWaveSource::new(sound_data).repeat_infinite();
+        sink.append(source);
+
+        // Store the sink reference for later control
+        self.current_sink = Some(Arc::new(sink));
         
         Ok(())
     }
 
-    /// Play sound data through the audio system
-    fn play_sound_data(&self, sound_data: Vec<i16>) -> Result<()> {
+
+
+    /// Play sound data through the audio system (non-blocking)
+    fn play_sound_data_non_blocking(&mut self, sound_data: Vec<i16>) -> Result<()> {
         let sink = Sink::try_new(&self.stream_handle)?;
         sink.set_volume(self.config.audio.volume);
         
@@ -135,8 +180,8 @@ impl NotificationManager {
         let source = SineWaveSource::new(sound_data);
         sink.append(source);
         
-        // Wait for the sound to finish playing
-        sink.sleep_until_end();
+        // Store the sink reference but don't wait for completion
+        self.current_sink = Some(Arc::new(sink));
         
         Ok(())
     }
@@ -253,39 +298,3 @@ fn generate_notification_sound() -> Vec<i16> {
     sound_data
 }
 
-/// Generate a triple beep sound for special events
-pub fn generate_triple_beep() -> Vec<i16> {
-    let sample_rate = 44100.0;
-    let duration = 1.0; // Total duration
-    let samples = (sample_rate * duration) as usize;
-    let mut sound_data = Vec::with_capacity(samples);
-
-    for i in 0..samples {
-        let t = i as f32 / sample_rate;
-        
-        // Three beeps with pauses
-        let sample = if t < 0.15 {
-            // First beep
-            (t * 800.0 * 2.0 * std::f32::consts::PI).sin() * 0.6
-        } else if t < 0.25 {
-            // Pause
-            0.0
-        } else if t < 0.4 {
-            // Second beep
-            ((t - 0.25) * 800.0 * 2.0 * std::f32::consts::PI).sin() * 0.6
-        } else if t < 0.5 {
-            // Pause
-            0.0
-        } else if t < 0.65 {
-            // Third beep
-            ((t - 0.5) * 800.0 * 2.0 * std::f32::consts::PI).sin() * 0.6
-        } else {
-            // Final silence
-            0.0
-        };
-        
-        sound_data.push((sample * i16::MAX as f32) as i16);
-    }
-
-    sound_data
-}

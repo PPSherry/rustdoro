@@ -151,35 +151,6 @@ impl Config {
         self.general.no_clock
     }
 
-    /// Create configuration from command line arguments (legacy method)
-    pub fn load_from_cli_args(args: CliArgs) -> Self {
-        let mut config = Self::default();
-        
-        // Update based on CLI args
-        config.time.work_minutes = args.work_duration;
-        config.time.small_break_minutes = args.short_break;
-        config.time.long_break_minutes = args.long_break;
-        config.time.tomatoes_per_set = args.long_break_after;
-        config.general.no_sound = args.no_sound;
-        config.general.no_clock = args.no_clock;
-        
-        if let Some(volume) = args.volume {
-            config.audio.volume = volume.clamp(0.0, 1.0);
-        }
-        
-        if let Some(audio_file) = args.audio_file {
-            config.audio.audio_file = Some(audio_file);
-        }
-
-        // Focus mode overrides sound and clock settings
-        if args.focus {
-            config.general.no_sound = true;
-            config.general.no_clock = true;
-        }
-
-        config
-    }
-
     /// Save configuration to file with comments
     pub fn save_to_file(&self, path: &PathBuf) -> Result<()> {
         let toml_string = toml::to_string_pretty(self)?;
@@ -207,13 +178,15 @@ impl Config {
 
     /// Get the default config file path
     pub fn default_config_path() -> Result<PathBuf> {
-        let mut path = dirs::home_dir()
+        let mut path: PathBuf = dirs::home_dir()
             .ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
         path.push(".rustdoro.ini");
         Ok(path)
     }
 
-    /// Load configuration with fallback: file -> default
+    /// Load configuration with fallback
+    /// If default config file exists, use default file.
+    /// If not, use default config.
     pub fn load_with_fallback() -> Self {
         if let Ok(config_path) = Self::default_config_path() {
             if config_path.exists() {
@@ -226,6 +199,10 @@ impl Config {
     }
 
     /// Load configuration from CLI args with config file support
+    /// Configuration loading priority:
+    /// 1. Command-line arguments
+    /// 2. Specified configuration file via --path flag
+    /// 3. Default configuration file
     pub fn load_from_cli_args_with_config(args: CliArgs) -> Self {
         // First, try to load from config file (either specified or default)
         let mut config = if let Some(config_path) = &args.config_path {
@@ -302,23 +279,6 @@ impl Config {
         Ok(())
     }
 
-    /// Save configuration to specified path or default location
-    pub fn save_config(&self, path: Option<&PathBuf>) -> Result<()> {
-        let config_path = if let Some(p) = path {
-            p.clone()
-        } else {
-            Self::default_config_path()?
-        };
-
-        // Create parent directory if it doesn't exist
-        if let Some(parent) = config_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        self.save_to_file(&config_path)?;
-        println!("Configuration saved to: {:?}", config_path);
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -327,7 +287,7 @@ mod tests {
 
     #[test]
     fn test_home_directory() {
-        // get home directory
+        // Get home directory
         let home = dirs::home_dir();
         println!("Home directory is {:?}", home);
 
