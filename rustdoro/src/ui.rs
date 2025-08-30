@@ -8,14 +8,53 @@ use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span, Text},
+    text::{Line, Span},
     widgets::{
-        Block, Borders, Clear, Gauge, List, ListItem, Paragraph,
+        Block, Borders, Clear, List, ListItem, Paragraph,
     },
     Frame, Terminal,
 };
 use std::io;
-use crate::timer::{SessionType, Timer, TimerState};
+use crate::timer::{SessionType, Timer};
+
+/// Menu items for the top navigation bar
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MenuItem {
+    Start,
+    Pause,
+    Skip,
+    Reset,
+    Help,
+    Exit,
+}
+
+impl MenuItem {
+    /// Get all menu items in order
+    pub fn all() -> Vec<MenuItem> {
+        vec![
+            MenuItem::Start,
+            MenuItem::Pause,
+            MenuItem::Skip,
+            MenuItem::Reset,
+            MenuItem::Help,
+            MenuItem::Exit,
+        ]
+    }
+
+    /// Get the display text for the menu item
+    pub fn display_text(&self) -> &'static str {
+        match self {
+            MenuItem::Start => "Start",
+            MenuItem::Pause => "Pause",
+            MenuItem::Skip => "Skip",
+            MenuItem::Reset => "Reset",
+            MenuItem::Help => "Help",
+            MenuItem::Exit => "Exit",
+        }
+    }
+
+
+}
 
 /// UI state and configuration
 pub struct AppUI {
@@ -23,6 +62,10 @@ pub struct AppUI {
     pub show_help: bool,
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
     hide_clock: bool,
+    /// Currently focused menu item
+    pub focused_menu_item: MenuItem,
+    /// Flag to indicate if audio should be stopped on the next input check
+    should_stop_audio: bool,
 }
 
 impl AppUI {
@@ -40,7 +83,23 @@ impl AppUI {
             show_help: false,
             terminal,
             hide_clock,
+            focused_menu_item: MenuItem::Start,
+            should_stop_audio: false,
         })
+    }
+
+    /// Update focused menu item based on timer state
+    pub fn update_focus_based_on_timer_state(&mut self, timer: &Timer) {
+        // Auto-update focus based on timer state for better UX
+        match self.focused_menu_item {
+            MenuItem::Start if timer.is_running() => {
+                self.focused_menu_item = MenuItem::Pause;
+            }
+            MenuItem::Pause if !timer.is_running() => {
+                self.focused_menu_item = MenuItem::Start;
+            }
+            _ => {} // Keep current focus for other items
+        }
     }
 
     /// Restore the terminal to its original state
@@ -56,15 +115,18 @@ impl AppUI {
     }
 
     /// Draw the UI
-    pub fn draw(&mut self, timer: &Timer) -> Result<()> {
+    pub fn draw(&mut self, timer: &Timer, show_completion_message: bool) -> Result<()> {
         let show_help = self.show_help;
         let hide_clock = self.hide_clock;
+        let focused_item = self.focused_menu_item;
         
         self.terminal.draw(|f| {
-            render_main_ui(f, timer, hide_clock);
+            render_new_ui(f, timer, hide_clock, focused_item);
             
             if show_help {
                 render_help_popup(f);
+            } else if show_completion_message {
+                render_completion_message_popup(f);
             }
         })?;
         Ok(())
@@ -80,37 +142,139 @@ impl AppUI {
         Ok(false)
     }
 
+    /// Check if audio should be stopped on input and reset the flag
+    pub fn should_stop_audio_on_input(&mut self) -> bool {
+        let result = self.should_stop_audio;
+        self.should_stop_audio = false;
+        result
+    }
+
+    /// Move focus to the next menu item
+    pub fn next_menu_item(&mut self) {
+        let items = MenuItem::all();
+        let current_index = items.iter().position(|&item| item == self.focused_menu_item).unwrap_or(0);
+        let next_index = (current_index + 1) % items.len();
+        self.focused_menu_item = items[next_index];
+    }
+
+    /// Move focus to the previous menu item
+    pub fn prev_menu_item(&mut self) {
+        let items = MenuItem::all();
+        let current_index = items.iter().position(|&item| item == self.focused_menu_item).unwrap_or(0);
+        let prev_index = if current_index == 0 { items.len() - 1 } else { current_index - 1 };
+        self.focused_menu_item = items[prev_index];
+    }
+
+    /// Execute the currently focused menu item
+    pub fn execute_focused_item(&mut self, timer: &mut Timer) -> bool {
+        match self.focused_menu_item {
+            MenuItem::Start => {
+                if timer.is_stopped() || timer.is_paused() {
+                    // Stop any playing audio when starting a new session
+                    self.should_stop_audio = true;
+                    timer.toggle_pause();
+                    // Update focus to pause when timer starts
+                    if timer.is_running() {
+                        self.focused_menu_item = MenuItem::Pause;
+                    }
+                }
+                false
+            }
+            MenuItem::Pause => {
+                if timer.is_running() {
+                    timer.toggle_pause();
+                    // Update focus to start when timer pauses
+                    if timer.is_paused() {
+                        self.focused_menu_item = MenuItem::Start;
+                    }
+                }
+                false
+            }
+            MenuItem::Skip => {
+                // Stop any playing audio when skipping
+                self.should_stop_audio = true;
+                timer.skip_session();
+                self.focused_menu_item = MenuItem::Start;
+                false
+            }
+            MenuItem::Reset => {
+                // Stop any playing audio when resetting
+                self.should_stop_audio = true;
+                timer.reset();
+                self.focused_menu_item = MenuItem::Start;
+                false
+            }
+            MenuItem::Help => {
+                self.show_help = !self.show_help;
+                false
+            }
+            MenuItem::Exit => {
+                self.should_quit = true;
+                true
+            }
+        }
+    }
+
     /// Process keyboard events
     fn process_key_event(&mut self, key: KeyEvent, timer: &mut Timer) -> bool {
         if self.show_help {
             // In help mode, any key closes help
-            match key.code {
-                KeyCode::Char('q') | KeyCode::Esc | KeyCode::Char('h') | KeyCode::Char('?') => {
-                    self.show_help = false;
-                }
-                _ => {
-                    self.show_help = false;
-                }
-            }
+            self.show_help = false;
             return false;
         }
 
-        // Normal mode key handling
+        // Handle navigation keys
         match key.code {
+            // Tab key - move to next menu item
+            KeyCode::Tab => {
+                self.next_menu_item();
+                false
+            }
+            // Left arrow - move to previous menu item
+            KeyCode::Left => {
+                self.prev_menu_item();
+                false
+            }
+            // Right arrow - move to next menu item
+            KeyCode::Right => {
+                self.next_menu_item();
+                false
+            }
+            // Enter or Space - execute focused menu item
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                self.execute_focused_item(timer)
+            }
+            // Legacy shortcut keys (still supported)
             KeyCode::Char('q') | KeyCode::Esc => {
                 self.should_quit = true;
                 true
             }
-            KeyCode::Char(' ') | KeyCode::Char('p') => {
+            KeyCode::Char('p') => {
+                // Stop any playing audio when starting a new session via shortcut
+                if !timer.is_running() {
+                    self.should_stop_audio = true;
+                }
                 timer.toggle_pause();
+                // Update focused item based on timer state
+                if timer.is_running() {
+                    self.focused_menu_item = MenuItem::Pause;
+                } else {
+                    self.focused_menu_item = MenuItem::Start;
+                }
                 false
             }
             KeyCode::Char('s') => {
+                // Stop any playing audio when skipping via shortcut
+                self.should_stop_audio = true;
                 timer.skip_session();
+                self.focused_menu_item = MenuItem::Start;
                 false
             }
             KeyCode::Char('r') => {
+                // Stop any playing audio when resetting via shortcut
+                self.should_stop_audio = true;
                 timer.reset();
+                self.focused_menu_item = MenuItem::Start;
                 false
             }
             KeyCode::Char('h') | KeyCode::Char('?') => {
@@ -143,218 +307,260 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-/// Render the main UI
-fn render_main_ui(f: &mut Frame, timer: &Timer, hide_clock: bool) {
-        let size = f.size();
+/// Render the new single-screen UI
+fn render_new_ui(f: &mut Frame, timer: &Timer, hide_clock: bool, focused_item: MenuItem) {
+    let size = f.size();
+    
+    // Create main layout - single clean screen
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),   // Top menu bar
+            Constraint::Length(2),   // Usage hint
+            Constraint::Length(3),   // Session status
+            Constraint::Min(8),      // ASCII art and timer
+            Constraint::Length(3),   // Statistics
+        ])
+        .split(size);
+
+    render_menu_bar(f, chunks[0], focused_item, timer);
+    render_usage_hint(f, chunks[1]);
+    render_session_status(f, chunks[2], timer);
+    render_ascii_art_center(f, chunks[3], timer, hide_clock);
+    render_statistics(f, chunks[4], timer);
+}
+
+/// Render the top menu bar with focus navigation
+fn render_menu_bar(f: &mut Frame, area: Rect, focused_item: MenuItem, timer: &Timer) {
+    let menu_items = MenuItem::all();
+    let mut spans = Vec::new();
+    
+    for (i, &item) in menu_items.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw("  "));
+        }
         
-        // Create main layout
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3),  // Header
-                Constraint::Min(10),    // Main content
-                Constraint::Length(3),  // Status bar
-            ])
-            .split(size);
-
-        render_header(f, chunks[0]);
-        render_main_content(f, chunks[1], timer, hide_clock);
-        render_status_bar(f, chunks[2], timer);
-    }
-
-/// Render the header
-fn render_header(f: &mut Frame, area: Rect) {
-        let title = Paragraph::new("🍅 Rustdoro - Pomodoro Timer")
-            .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
-            .alignment(Alignment::Center)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .style(Style::default().fg(Color::White)),
-            );
-        f.render_widget(title, area);
-    }
-
-/// Render the main content area
-fn render_main_content(f: &mut Frame, area: Rect, timer: &Timer, hide_clock: bool) {
-        let content_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(5),  // Session info
-                Constraint::Length(8),  // Timer display
-                Constraint::Length(3),  // Progress bar
-                Constraint::Min(3),     // Stats
-            ])
-            .split(area);
-
-        render_session_info(f, content_chunks[0], timer);
-        render_timer_display(f, content_chunks[1], timer, hide_clock);
-        render_progress_bar(f, content_chunks[2], timer);
-        render_stats(f, content_chunks[3], timer);
-    }
-
-/// Render session information
-fn render_session_info(f: &mut Frame, area: Rect, timer: &Timer) {
-        let session_type = timer.get_session_type();
-        let (session_text, session_color) = match session_type {
-            SessionType::Work => ("Work Session", Color::Green),
-            SessionType::ShortBreak => ("Short Break", Color::Yellow),
-            SessionType::LongBreak => ("Long Break", Color::Blue),
-        };
-
-        let session_info = Paragraph::new(format!(
-            "{} {} - {}",
-            session_type.emoji(),
-            session_text,
-            match timer.get_state() {
-                TimerState::Running => "Running",
-                TimerState::Paused => "Paused",
-                TimerState::Stopped => "Ready to Start",
+        // Determine if this item should be highlighted
+        let is_focused = item == focused_item;
+        
+        // Special handling for Start/Pause based on timer state
+        let (display_text, is_active) = match item {
+            MenuItem::Start => {
+                if timer.is_running() {
+                    ("Start", false) // Show but inactive when running
+                } else {
+                    ("Start", true)
+                }
             }
-        ))
+            MenuItem::Pause => {
+                if timer.is_running() {
+                    ("Pause", true)
+                } else {
+                    ("Pause", false) // Show but inactive when not running
+                }
+            }
+            _ => (item.display_text(), true)
+        };
+        
+        let style = if is_focused {
+            Style::default()
+                .bg(Color::White)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD)
+        } else if is_active {
+            Style::default().fg(Color::White)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        
+        spans.push(Span::styled(format!("< {} >", display_text), style));
+    }
+    
+    let menu_bar = Paragraph::new(Line::from(spans))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL));
+    
+    f.render_widget(menu_bar, area);
+}
+
+/// Render usage hint
+fn render_usage_hint(f: &mut Frame, area: Rect) {
+    let hint = Paragraph::new("Press Tab/←/→ to navigate, Enter/Space to select")
+        .style(Style::default().fg(Color::Cyan))
+        .alignment(Alignment::Center);
+    
+    f.render_widget(hint, area);
+}
+
+/// Render session status with colors
+fn render_session_status(f: &mut Frame, area: Rect, timer: &Timer) {
+    let session_type = timer.get_session_type();
+    let (session_text, session_color) = match session_type {
+        SessionType::Work => ("Work", Color::Green),
+        SessionType::ShortBreak => ("Short Break", Color::Yellow),
+        SessionType::LongBreak => ("Long Break", Color::Blue),
+    };
+    
+    let status_text = format!("{} {}", session_type.emoji(), session_text);
+    let status = Paragraph::new(status_text)
         .style(Style::default().fg(session_color).add_modifier(Modifier::BOLD))
         .alignment(Alignment::Center)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Current Session")
-                .style(Style::default().fg(Color::White)),
-        );
+        .block(Block::default().borders(Borders::ALL));
+    
+    f.render_widget(status, area);
+}
 
-        f.render_widget(session_info, area);
+/// Render ASCII art center with timer
+fn render_ascii_art_center(f: &mut Frame, area: Rect, timer: &Timer, hide_clock: bool) {
+    let time_text = if hide_clock {
+        "••:••".to_string()
+    } else {
+        timer.get_display_time()
+    };
+    
+    // Create ASCII art based on progress
+    let progress = timer.get_progress();
+    let ascii_art = create_progress_ascii_art(progress);
+    
+    let session_color = match timer.get_session_type() {
+        SessionType::Work => Color::Green,
+        SessionType::ShortBreak => Color::Yellow,
+        SessionType::LongBreak => Color::Blue,
+    };
+    
+    // Split ASCII art into lines for individual styling
+    let ascii_lines: Vec<&str> = ascii_art.split('\n').collect();
+    
+    // Create content with logo, ASCII art, and timer
+    let mut content = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "🍅 R U S T D O R O 🍅", 
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+        )),
+        Line::from(""),
+    ];
+    
+    // Add ASCII art lines with styling
+    for line in ascii_lines {
+        content.push(Line::from(Span::styled(line, Style::default().fg(session_color))));
     }
+    
+    // Add timer display
+    content.push(Line::from(""));
+    content.push(Line::from(Span::styled(
+        format!("│ ⏰ {} remaining │", time_text),
+        Style::default().fg(session_color).add_modifier(Modifier::BOLD)
+    )));
+    content.push(Line::from(""));
+    
+    let ascii_display = Paragraph::new(content)
+        .alignment(Alignment::Center);
+    
+    f.render_widget(ascii_display, area);
+}
 
-/// Render the timer display
-fn render_timer_display(f: &mut Frame, area: Rect, timer: &Timer, hide_clock: bool) {
-        let time_text = if hide_clock {
-            "••:••".to_string()
-        } else {
-            timer.get_display_time()
-        };
-
-        // Create large ASCII art for time display
-        let time_display = Paragraph::new(Text::from(vec![
-            Line::from(""),
-            Line::from(Span::styled(
-                time_text,
-                Style::default()
-                    .fg(match timer.get_session_type() {
-                        SessionType::Work => Color::Green,
-                        SessionType::ShortBreak => Color::Yellow,
-                        SessionType::LongBreak => Color::Blue,
-                    })
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::from(""),
-        ]))
+/// Render statistics without borders for clean look
+fn render_statistics(f: &mut Frame, area: Rect, timer: &Timer) {
+    let stats_text = format!("🍅 Completed Pomodoros: {}", timer.get_pomodoros_completed());
+    let stats = Paragraph::new(stats_text)
         .alignment(Alignment::Center)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Time Remaining")
-                .style(Style::default().fg(Color::White)),
-        );
+        .style(Style::default().fg(Color::White))
+        .block(Block::default().borders(Borders::ALL));
+    
+    f.render_widget(stats, area);
+}
 
-        f.render_widget(time_display, area);
+/// Create ASCII art representing progress
+fn create_progress_ascii_art(progress: f64) -> String {
+    let segments = 8;
+    let filled_segments = (progress * segments as f64) as usize;
+    
+    // Create a more sophisticated octagon design
+    let mut art = String::new();
+    
+    // Top section
+    art.push_str("      ╭───────╮\n");
+    art.push_str("    ╱           ╲\n");
+    art.push_str("   ╱             ╲\n");
+    art.push_str("  ╱               ╲\n");
+    
+    // Middle section with progress bar
+    art.push_str(" │  ");
+    for i in 0..segments {
+        if i < filled_segments {
+            art.push('█');
+        } else {
+            art.push('░');
+        }
     }
-
-/// Render progress bar
-fn render_progress_bar(f: &mut Frame, area: Rect, timer: &Timer) {
-        let progress = timer.get_progress();
-        let progress_percent = (progress * 100.0) as u16;
-
-        let progress_bar = Gauge::default()
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Progress")
-                    .style(Style::default().fg(Color::White)),
-            )
-            .gauge_style(Style::default().fg(match timer.get_session_type() {
-                SessionType::Work => Color::Green,
-                SessionType::ShortBreak => Color::Yellow,
-                SessionType::LongBreak => Color::Blue,
-            }))
-            .percent(progress_percent)
-            .label(format!("{}%", progress_percent));
-
-        f.render_widget(progress_bar, area);
-    }
-
-/// Render statistics
-fn render_stats(f: &mut Frame, area: Rect, timer: &Timer) {
-        let stats_text = vec![
-            Line::from(format!("🍅 Completed Pomodoros: {}", timer.get_pomodoros_completed())),
-            Line::from(""),
-            Line::from("Controls:"),
-            Line::from("  [Space/P] Start/Pause  [S] Skip  [R] Reset"),
-            Line::from("  [H/?] Help  [Q/Esc] Quit"),
-        ];
-
-        let stats = Paragraph::new(stats_text)
-            .alignment(Alignment::Center)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Statistics & Controls")
-                    .style(Style::default().fg(Color::White)),
-            );
-
-        f.render_widget(stats, area);
-    }
-
-/// Render status bar
-fn render_status_bar(f: &mut Frame, area: Rect, timer: &Timer) {
-        let status_text = match timer.get_state() {
-            TimerState::Running => "● Running - Press [Space] to pause",
-            TimerState::Paused => "⏸ Paused - Press [Space] to resume",
-            TimerState::Stopped => "⏹ Stopped - Press [Space] to start",
-        };
-
-        let status_bar = Paragraph::new(status_text)
-            .style(Style::default().fg(Color::Cyan))
-            .alignment(Alignment::Center)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .style(Style::default().fg(Color::White)),
-            );
-
-        f.render_widget(status_bar, area);
-    }
+    art.push_str("  │\n");
+    
+    // Bottom section
+    art.push_str("  ╲               ╱\n");
+    art.push_str("   ╲             ╱\n");
+    art.push_str("    ╲           ╱\n");
+    art.push_str("      ╰───────╯");
+    
+    art
+}
 
 /// Render help popup
 fn render_help_popup(f: &mut Frame) {
-        let area = centered_rect(60, 70, f.size());
+    let area = centered_rect(70, 80, f.size());
 
-        let help_items = vec![
-            ListItem::new("Keyboard Shortcuts:"),
-            ListItem::new(""),
-            ListItem::new("  [Space] or [P]  - Start/Pause timer"),
-            ListItem::new("  [S]             - Skip current session"),
-            ListItem::new("  [R]             - Reset timer"),
-            ListItem::new("  [H] or [?]      - Show/Hide this help"),
-            ListItem::new("  [Q] or [Esc]    - Quit application"),
-            ListItem::new(""),
-            ListItem::new("About Pomodoro Technique:"),
-            ListItem::new(""),
-            ListItem::new("• Work for 25 minutes (1 Pomodoro)"),
-            ListItem::new("• Take a 5-minute break"),
-            ListItem::new("• After 4 Pomodoros, take a 15-minute break"),
-            ListItem::new("• Repeat the cycle"),
-            ListItem::new(""),
-            ListItem::new("Press any key to close this help."),
-        ];
+    let help_items = vec![
+        ListItem::new("🍅 Rustdoro - Navigation Help"),
+        ListItem::new(""),
+        ListItem::new("Menu Navigation:"),
+        ListItem::new("  [Tab] or [→]    - Next menu item"),
+        ListItem::new("  [←]             - Previous menu item"),
+        ListItem::new("  [Enter/Space]   - Execute focused item"),
+        ListItem::new(""),
+        ListItem::new("Legacy Shortcuts (still work):"),
+        ListItem::new("  [P]             - Start/Pause timer"),
+        ListItem::new("  [S]             - Skip current session"),
+        ListItem::new("  [R]             - Reset timer"),
+        ListItem::new("  [H] or [?]      - Show/Hide this help"),
+        ListItem::new("  [Q] or [Esc]    - Quit application"),
+        ListItem::new(""),
+        ListItem::new("About Pomodoro Technique:"),
+        ListItem::new(""),
+        ListItem::new("• Work for 25 minutes (1 Pomodoro)"),
+        ListItem::new("• Take a 5-minute break"),
+        ListItem::new("• After 4 Pomodoros, take a 15-minute break"),
+        ListItem::new("• Repeat the cycle"),
+        ListItem::new(""),
+        ListItem::new("Press any key to close this help."),
+    ];
 
-        let help_list = List::new(help_items)
-            .block(
-                Block::default()
-                    .title(" Help ")
-                    .borders(Borders::ALL)
-                    .style(Style::default().fg(Color::Yellow)),
-            )
-            .style(Style::default().fg(Color::White));
+    let help_list = List::new(help_items)
+        .block(
+            Block::default()
+                .title(" Help ")
+                .borders(Borders::ALL)
+                .style(Style::default().fg(Color::Yellow)),
+        )
+        .style(Style::default().fg(Color::White));
 
-        f.render_widget(Clear, area); // Clear the background
-        f.render_widget(help_list, area);
-    } 
+    f.render_widget(Clear, area); // Clear the background
+    f.render_widget(help_list, area);
+}
+
+/// Render completion message popup
+fn render_completion_message_popup(f: &mut Frame) {
+    let area = centered_rect(50, 30, f.size());
+
+    let message = Paragraph::new("🎉 Session completed!\n\nPress any key to continue...")
+        .block(
+            Block::default()
+                .title(" Session Complete ")
+                .borders(Borders::ALL)
+                .style(Style::default().fg(Color::Green)),
+        )
+        .style(Style::default().fg(Color::White))
+        .alignment(Alignment::Center);
+
+    f.render_widget(Clear, area); // Clear the background
+    f.render_widget(message, area);
+}

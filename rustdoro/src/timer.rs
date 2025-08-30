@@ -10,14 +10,7 @@ pub enum SessionType {
 }
 
 impl SessionType {
-    /// Get the display text for the session type
-    pub fn display_text(&self) -> &'static str {
-        match self {
-            SessionType::Work => "Work Session",
-            SessionType::ShortBreak => "Short Break",
-            SessionType::LongBreak => "Long Break",
-        }
-    }
+
 
     /// Get the emoji representation for the session type
     pub fn emoji(&self) -> &'static str {
@@ -68,19 +61,19 @@ pub struct Timer {
 impl Timer {
     /// Create a new timer instance with the given configuration
     pub fn new(config: Config) -> Self {
-        let work_duration = Duration::from_secs(config.work_duration_minutes * 60);
+        let work_duration = Duration::from_secs(config.work_duration_minutes() * 60);
         
         Self {
             current_session: SessionType::Work,
             remaining_time: work_duration,
             state: TimerState::Stopped,
             work_duration,
-            short_break_duration: Duration::from_secs(config.short_break_duration_minutes * 60),
-            long_break_duration: Duration::from_secs(config.long_break_duration_minutes * 60),
+            short_break_duration: Duration::from_secs(config.short_break_duration_minutes() * 60),
+            long_break_duration: Duration::from_secs(config.long_break_duration_minutes() * 60),
             pomodoros_completed: 0,
             last_update_time: None,
             break_count: 0,
-            long_break_after_pomodoros: config.long_break_after_pomodoros,
+            long_break_after_pomodoros: config.long_break_after_pomodoros(),
         }
     }
 
@@ -191,10 +184,7 @@ impl Timer {
         self.pomodoros_completed
     }
 
-    /// Get the current timer state
-    pub fn get_state(&self) -> TimerState {
-        self.state
-    }
+
 
     /// Check if the timer is currently running
     pub fn is_running(&self) -> bool {
@@ -233,12 +223,5 @@ impl Timer {
         self.break_count = 0;
     }
 
-    /// Get total session duration for current session type
-    pub fn get_total_duration(&self) -> Duration {
-        match self.current_session {
-            SessionType::Work => self.work_duration,
-            SessionType::ShortBreak => self.short_break_duration,
-            SessionType::LongBreak => self.long_break_duration,
-        }
-    }
+
 } 

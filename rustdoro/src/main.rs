@@ -19,14 +19,15 @@ struct App {
     ui: AppUI,
     notifications: NotificationManager,
     last_session_type: SessionType,
+    show_completion_message: bool,
 }
 
 impl App {
     /// Create a new application instance
     fn new(config: Config) -> Result<Self> {
         let timer = Timer::new(config.clone());
-        let ui = AppUI::new(config.hide_clock)?;
-        let notifications = NotificationManager::new(config.enable_sound)?;
+        let ui = AppUI::new(config.hide_clock())?;
+        let notifications = NotificationManager::new(config.clone())?;
         let last_session_type = timer.get_session_type();
 
         Ok(Self {
@@ -34,6 +35,7 @@ impl App {
             ui,
             notifications,
             last_session_type,
+            show_completion_message: false,
         })
     }
 
@@ -63,6 +65,13 @@ impl App {
                 _ = async {
                     // Handle input synchronously for now
                     if let Ok(input_handled) = self.ui.handle_input(&mut self.timer) {
+                        // Stop audio when user interacts with timer controls
+                        if self.ui.should_stop_audio_on_input() {
+                            self.notifications.stop_audio();
+                            // Hide completion message when user starts interacting
+                            self.show_completion_message = false;
+                        }
+                        
                         if input_handled {
                             return;
                         }
@@ -70,8 +79,11 @@ impl App {
                 } => {}
             }
 
+            // Update UI focus based on timer state
+            self.ui.update_focus_based_on_timer_state(&self.timer);
+            
             // Draw the UI
-            self.ui.draw(&self.timer)?;
+            self.ui.draw(&self.timer, self.show_completion_message)?;
 
             // Check if we should quit
             if self.ui.should_quit {
@@ -87,14 +99,16 @@ impl App {
 
     /// Handle session completion
     async fn handle_session_completion(&mut self) -> Result<()> {
-        // Play session end sound
+        // Play session end sound continuously until user interaction
         if let Err(e) = self.notifications.play_end_sound() {
             eprintln!("Warning: Failed to play end sound: {}", e);
         }
 
-        // Show completion message briefly
-        println!("\n🎉 Session completed! Starting next session...\n");
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        // Show completion message in UI
+        self.show_completion_message = true;
+        
+        // Note: Audio will continue playing until user interacts with the timer
+        // The audio stopping is handled in the main loop when user input is detected
 
         Ok(())
     }
@@ -124,11 +138,38 @@ async fn main() -> Result<()> {
     // Parse command line arguments
     let args = CliArgs::parse();
     
-    // Create configuration from CLI arguments
-    let config = Config::load_from_cli_args(args);
+    // Handle config file generation if requested
+    if args.generate_config {
+        match Config::create_sample_config() {
+            Ok(()) => {
+                println!("Sample configuration file created successfully!");
+                println!("You can now edit the configuration file and run rustdoro again.");
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("Failed to create sample configuration file: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
     
-    // Print welcome message
+    // Create configuration from CLI arguments with config file support
+    let config = Config::load_from_cli_args_with_config(args);
+    
+    // Print welcome message and current configuration
     println!("🍅 Welcome to Rustdoro - A Terminal Pomodoro Timer");
+    println!("Configuration:");
+    println!("  Work session: {} minutes", config.work_duration_minutes());
+    println!("  Short break: {} minutes", config.short_break_duration_minutes());
+    println!("  Long break: {} minutes", config.long_break_duration_minutes());
+    println!("  Long break after: {} pomodoros", config.long_break_after_pomodoros());
+    println!("  Sound enabled: {}", config.enable_sound());
+    println!("  Hide clock: {}", config.hide_clock());
+    if let Some(audio_file) = &config.audio.audio_file {
+        println!("  Custom audio file: {}", audio_file);
+    }
+    println!("  Audio volume: {:.1}", config.audio.volume);
+    println!();
     println!("Press 'h' or '?' for help once the application starts.");
     println!("Starting in 2 seconds...\n");
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -167,32 +208,7 @@ impl Drop for App {
     }
 }
 
-/// Print application information
-fn print_app_info() {
-    println!("Rustdoro v{}", env!("CARGO_PKG_VERSION"));
-    println!("A terminal-based Pomodoro timer written in Rust");
-    println!("Copyright (c) 2024");
-    println!();
-}
 
-/// Handle panic to ensure terminal restoration
-fn setup_panic_hook() {
-    let original_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |panic_info| {
-        use crossterm::{
-            execute,
-            terminal::{disable_raw_mode, LeaveAlternateScreen},
-        };
-        
-        let _ = disable_raw_mode();
-        let _ = execute!(
-            std::io::stdout(),
-            LeaveAlternateScreen
-        );
-        
-        original_hook(panic_info);
-    }));
-}
 
 #[cfg(test)]
 mod tests {
@@ -201,11 +217,11 @@ mod tests {
     #[test]
     fn test_config_creation() {
         let config = Config::default();
-        assert_eq!(config.work_duration_minutes, 25);
-        assert_eq!(config.short_break_duration_minutes, 5);
-        assert_eq!(config.long_break_duration_minutes, 15);
-        assert!(config.enable_sound);
-        assert!(!config.hide_clock);
+        assert_eq!(config.time.work_minutes, 25);
+        assert_eq!(config.time.small_break_minutes, 5);
+        assert_eq!(config.time.long_break_minutes, 15);
+        assert!(!config.general.no_sound);
+        assert!(!config.general.no_clock);
     }
 
     #[test]
