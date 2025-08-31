@@ -25,7 +25,7 @@ A modern, feature-rich terminal-based Pomodoro timer written in Rust. Rustdoro h
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/rustdoro.git
+git clone https://github.com/PPSherry/rustdoro.git
 cd rustdoro
 
 # Build the project
@@ -67,7 +67,6 @@ Options:
       --no-clock                   Hide the clock display
       --focus                      Enable focus mode (hides clock and disables sound)
   -h, --help                       Print help information
-  -V, --version                    Print version information
 ```
 
 ### Examples
@@ -86,29 +85,18 @@ rustdoro --focus
 rustdoro --long-break-after 3
 ```
 
-## Keyboard Controls
+### Keyboard Controls
 
 Once the application is running, use these keyboard shortcuts:
 
 | Key | Action |
 |-----|--------|
-| `Space` or `P` | Start/Pause timer |
+| `P` | Start/Pause timer |
 | `S` | Skip current session |
 | `R` | Reset timer |
 | `H` or `?` | Show/Hide help |
 | `Q` or `Esc` | Quit application |
 
-## The Pomodoro Technique
-
-The Pomodoro Technique is a time management method developed by Francesco Cirillo in the late 1980s:
-
-1. **Work**: Focus on a task for 25 minutes (1 Pomodoro)
-2. **Short Break**: Take a 5-minute break
-3. **Repeat**: Continue the work-break cycle
-4. **Long Break**: After 4 Pomodoros, take a 15-30 minute break
-5. **Reset**: Start the cycle again
-
-This technique helps maintain focus and prevents burnout by providing regular breaks.
 
 ## Project Structure
 
@@ -129,24 +117,34 @@ rustdoro/
 Rustdoro supports configuration through:
 
 1. **Command-line arguments** (highest priority)
-2. **Configuration file** (future feature)
-3. **Default values** (fallback)
+2. **Configuration file**
+3. **Default values**
 
-### Configuration File (Planned)
+### Configuration File
 
-Future versions will support a configuration file at:
-- Linux/macOS: `~/.config/rustdoro/config.toml`
-- Windows: `%APPDATA%\rustdoro\config.toml`
+use `rustdoro --generate-config` to generate a default configuration file under home directory (~/.rustdoro.ini)
 
-Example configuration:
-```toml
-work_duration_minutes = 25
-short_break_duration_minutes = 5
-long_break_duration_minutes = 15
-long_break_after_pomodoros = 4
-enable_sound = true
-hide_clock = false
-focus_mode = false
+Example:
+```
+# Rustdoro Configuration File
+# This file contains settings for the Rustdoro Pomodoro timer.
+# You can edit these values to customize your experience.
+
+[General]
+no_clock = false
+no_sound = false
+emoji = true
+
+[Time]
+tomatoes_per_set = 4
+work_minutes = 35
+small_break_minutes = 5
+long_break_minutes = 15
+
+[Audio]
+audio_file = "/Path/to/bell_sound.wav"
+volume = 1
+
 ```
 
 ## Development
@@ -164,30 +162,7 @@ cargo build --release
 RUST_LOG=debug cargo run
 ```
 
-### Testing
-
-```bash
-# Run all tests
-cargo test
-
-# Run tests with output
-cargo test -- --nocapture
-```
-
-### Code Quality
-
-```bash
-# Format code
-cargo fmt
-
-# Run clippy linter
-cargo clippy
-
-# Check for unused dependencies
-cargo machete
-```
-
-## Dependencies
+### Dependencies
 
 - [`clap`](https://crates.io/crates/clap) - Command line argument parsing
 - [`ratatui`](https://crates.io/crates/ratatui) - Terminal user interface framework
@@ -203,34 +178,18 @@ cargo machete
 
 Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
 
-### Development Guidelines
-
-1. Follow Rust naming conventions and idioms
-2. Add tests for new functionality
-3. Update documentation as needed
-4. Run `cargo fmt` and `cargo clippy` before submitting
-5. Keep commit messages clear and descriptive
-
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## Acknowledgments
 
-- Inspired by the original Pomodoro Technique by Francesco Cirillo
-- Built with the amazing Rust ecosystem
-- Special thanks to the ratatui and crossterm communities
+## Future Plan
 
-## Roadmap
-
-- [ ] Configuration file support
 - [ ] Session history and statistics
-- [ ] Custom sound files
 - [ ] Desktop notifications
 - [ ] Themes and color schemes
 - [ ] Session notes and task tracking
-- [ ] Export statistics to CSV/JSON
-- [ ] Web dashboard (optional)
+- [ ] Web dashboard
 
 ---
 
